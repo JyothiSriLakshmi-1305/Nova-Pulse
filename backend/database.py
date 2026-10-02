@@ -91,9 +91,17 @@ def init_db():
         quantity INTEGER NOT NULL,
         price REAL NOT NULL,
         is_substituted INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'placed',
         FOREIGN KEY (order_id) REFERENCES orders (id)
     )
     ''')
+
+    # Migration fallback for existing databases
+    try:
+        cursor.execute("ALTER TABLE order_items ADD COLUMN status TEXT DEFAULT 'placed'")
+    except Exception:
+        pass
+    cursor.execute("UPDATE order_items SET status = 'placed' WHERE status IS NULL")
 
     # Support Tickets table
     cursor.execute('''
@@ -123,6 +131,13 @@ def init_db():
         next_perk TEXT NOT NULL
     )
     ''')
+
+    # Performance Indexes for frequent lookups and joins (Eliminating table scans)
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items (order_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_order_items_store_id ON order_items (store_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_support_tickets_order_id ON support_tickets (order_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_products_store_id ON products (store_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_orders_customer_name ON orders (customer_name)')
 
     conn.commit()
     seed_data(conn)
@@ -200,7 +215,7 @@ def seed_data(conn):
             1, 2,
             383.0, 329.0, 54.0, 24,
             "Glen's Bakery + Nandi Organic + Malnad Dairy",
-            '[{"name": "Sourdough Boule (450g)", "store": "Glen\'s Artisan Bakery", "price": 180}, {"name": "A2 Farm Fresh Organic Milk (1L)", "store": "Nandi Organic Grocers", "price": 78}, {"name": "Artisan Buffalo Paneer (250g)", "store": "Malnad Fresh Dairy", "price": 125}]'
+            '[{"product_id": 6, "store_id": 2, "name": "Sourdough Boule (450g)", "store": "Glen\'s Artisan Bakery", "price": 180}, {"product_id": 1, "store_id": 1, "name": "A2 Farm Fresh Organic Milk (1L)", "store": "Nandi Organic Grocers", "price": 78}, {"product_id": 14, "store_id": 4, "name": "Artisan Buffalo Paneer (250g)", "store": "Malnad Fresh Dairy & Sweets", "price": 125}]'
         ),
         (
             "WFH Productivity & Energy Pack",
@@ -209,7 +224,7 @@ def seed_data(conn):
             2, 6,
             714.0, 599.0, 115.0, 26,
             "Glen's Bakery + Sagar Supermarket + Paper & Pen Hub",
-            '[{"name": "Gluten-Free Almond Biscotti (200g)", "store": "Glen\'s Artisan Bakery", "price": 220}, {"name": "Tata Tea Premium Gold (500g)", "store": "Sagar Supermarket", "price": 195}, {"name": "Hardbound Dotted Bullet Journal", "store": "Paper & Pen Hub", "price": 299}]'
+            '[{"product_id": 9, "store_id": 2, "name": "Gluten-Free Almond Biscotti (200g)", "store": "Glen\'s Artisan Bakery", "price": 220}, {"product_id": 17, "store_id": 5, "name": "Tata Tea Premium Gold (500g)", "store": "Sagar Supermarket", "price": 195}, {"product_id": 20, "store_id": 6, "name": "Hardbound Dotted Bullet Journal", "store": "Paper & Pen Stationery Hub", "price": 299}]'
         ),
         (
             "Family Emergency & Wellness Rescue Kit",
@@ -218,7 +233,7 @@ def seed_data(conn):
             3, 1,
             327.0, 279.0, 48.0, 20,
             "Apollo Care Pharmacy + Nandi Organic Grocers",
-            '[{"name": "Electral ORS Powder", "store": "Apollo Care Pharmacy", "price": 22}, {"name": "Digene Acidity Relief Gel", "store": "Apollo Care Pharmacy", "price": 145}, {"name": "Farm Fresh Hass Avocado (Pack of 2)", "store": "Nandi Organic Grocers", "price": 160}]'
+            '[{"product_id": 12, "store_id": 3, "name": "Electral ORS Powder", "store": "Apollo Care Pharmacy", "price": 22}, {"product_id": 10, "store_id": 3, "name": "Digene Acidity Relief Gel", "store": "Apollo Care Pharmacy", "price": 145}, {"product_id": 5, "store_id": 1, "name": "Farm Fresh Hass Avocado (Pack of 2)", "store": "Nandi Organic Grocers", "price": 160}]'
         ),
     ]
 

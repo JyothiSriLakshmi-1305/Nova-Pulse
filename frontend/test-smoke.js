@@ -39,7 +39,9 @@ const requiredFiles = [
   'src/pages/CustomerStoreView.jsx',
   'src/pages/MerchantCopilot.jsx',
   'src/pages/SupportPortal.jsx',
-  'src/pages/ExecutiveDashboard.jsx'
+  'src/pages/ExecutiveDashboard.jsx',
+  'src/components/OrderStatusBadge.jsx',
+  'src/components/AdminOrdersFeed.jsx'
 ];
 
 requiredFiles.forEach(file => {
@@ -107,6 +109,13 @@ assert(merchantContent.includes('Incoming Store Orders') && merchantContent.incl
 
 const adminContent = fs.readFileSync(path.join(__dirname, 'src/pages/ExecutiveDashboard.jsx'), 'utf-8');
 assert(adminContent.includes('Executive ROI & Turnaround Strategy') && adminContent.includes('Platform Operations & Support Desk'), "Admin console unifies ROI console with Operations Support Desk");
+assert(adminContent.includes('Platform Live Orders Feed'), "Admin console features dedicated Platform Live Orders Feed tab");
+
+const appContent = fs.readFileSync(path.join(__dirname, 'src/App.jsx'), 'utf-8');
+assert(appContent.includes('lazy(') && appContent.includes('Suspense'), "App.jsx implements route-level code splitting via React.lazy and Suspense");
+assert(!appContent.includes('import SupportPortal'), "App.jsx eliminates unused SupportPortal import");
+
+assert(customerContent.includes('Live inventory verification requested: Store will prioritize immediate dispatch.'), "Customer portal checks low-stock/stale inventory with verification prompt");
 
 console.log("\n------------------------------------------");
 console.log(`Results: ${passed} passed, ${failed} failed.`);

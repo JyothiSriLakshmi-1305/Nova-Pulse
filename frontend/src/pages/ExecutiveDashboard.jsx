@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import SupportPortal from './SupportPortal';
-import { BarChart3, TrendingUp, TrendingDown, DollarSign, Users, ShieldAlert, Award, Sliders, CheckCircle2, AlertOctagon, Info, Calculator, ShieldCheck } from 'lucide-react';
+import AdminOrdersFeed from '../components/AdminOrdersFeed';
+import { BarChart3, TrendingUp, TrendingDown, DollarSign, Users, ShieldAlert, Award, Sliders, CheckCircle2, AlertOctagon, Info, Calculator, ShieldCheck, Package } from 'lucide-react';
 
 export default function ExecutiveDashboard({ sharedOrderCounter }) {
   const [adminTab, setAdminTab] = useState('roi'); // 'roi' | 'support'
@@ -136,6 +137,18 @@ export default function ExecutiveDashboard({ sharedOrderCounter }) {
           </button>
 
           <button
+            onClick={() => setAdminTab('orders')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all focus-visible:ring-2 focus-visible:ring-purple-500 cursor-pointer ${
+              adminTab === 'orders'
+                ? 'bg-purple-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <Package className="w-4 h-4" />
+            <span>Platform Live Orders Feed</span>
+          </button>
+
+          <button
             onClick={() => setAdminTab('support')}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all focus-visible:ring-2 focus-visible:ring-purple-500 cursor-pointer ${
               adminTab === 'support'
@@ -156,7 +169,11 @@ export default function ExecutiveDashboard({ sharedOrderCounter }) {
         </div>
       </div>
 
-      {adminTab === 'support' ? (
+      {adminTab === 'orders' ? (
+        <div className="animate-fadeIn">
+          <AdminOrdersFeed sharedOrderCounter={sharedOrderCounter} />
+        </div>
+      ) : adminTab === 'support' ? (
         <div className="animate-fadeIn">
           <SupportPortal />
         </div>

@@ -1,152 +1,162 @@
 const API_BASE = '/api';
 
+/**
+ * Standardized safe request wrapper that handles network errors,
+ * non-2xx HTTP responses, and JSON parse exceptions.
+ */
+async function request(url, options = {}) {
+  try {
+    const res = await fetch(url, options);
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      data = null;
+    }
+
+    if (!res.ok) {
+      const errMsg = data?.error || `HTTP ${res.status}: ${res.statusText || 'Request failed'}`;
+      return { success: false, error: errMsg, status: res.status, ...(data || {}) };
+    }
+
+    return data || { success: true };
+  } catch (err) {
+    console.error(`API Error on ${url}:`, err);
+    return { success: false, error: err.message || 'Network communication failure' };
+  }
+}
+
 export const api = {
   // Stores & Products
   async getStores() {
-    const res = await fetch(`${API_BASE}/stores`);
-    return res.json();
+    return request(`${API_BASE}/stores`);
   },
 
   async getStoreProducts(storeId) {
-    const res = await fetch(`${API_BASE}/stores/${storeId}/products`);
-    return res.json();
+    return request(`${API_BASE}/stores/${storeId}/products`);
   },
 
   async toggleProductStock(storeId, productId, isInStock, stockQuantity) {
-    const res = await fetch(`${API_BASE}/stores/${storeId}/products/${productId}/toggle-stock`, {
+    return request(`${API_BASE}/stores/${storeId}/products/${productId}/toggle-stock`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ is_in_stock: isInStock, stock_quantity: stockQuantity })
     });
-    return res.json();
   },
 
   async toggleRushMode(storeId, rushMode) {
-    const res = await fetch(`${API_BASE}/stores/${storeId}/rush-mode`, {
+    return request(`${API_BASE}/stores/${storeId}/rush-mode`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ rush_mode: rushMode })
     });
-    return res.json();
   },
 
   async aiVoiceSync(storeId, note) {
-    const res = await fetch(`${API_BASE}/stores/${storeId}/ai-voice-sync`, {
+    return request(`${API_BASE}/stores/${storeId}/ai-voice-sync`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ note })
     });
-    return res.json();
   },
 
   // Bundles & Orders
   async getBundles() {
-    const res = await fetch(`${API_BASE}/bundles`);
-    return res.json();
+    return request(`${API_BASE}/bundles`);
   },
 
   async getOrders(customerName) {
     const url = customerName 
       ? `${API_BASE}/orders?customer_name=${encodeURIComponent(customerName)}`
       : `${API_BASE}/orders`;
-    const res = await fetch(url);
-    return res.json();
+    return request(url);
   },
 
   async getCustomerOrders(customerName = 'Kavita Iyer') {
-    const res = await fetch(`${API_BASE}/orders?customer_name=${encodeURIComponent(customerName)}`);
-    return res.json();
+    return request(`${API_BASE}/orders?customer_name=${encodeURIComponent(customerName)}`);
   },
 
   async getStoreOrders(storeId) {
-    const res = await fetch(`${API_BASE}/stores/${storeId}/orders`);
-    return res.json();
+    return request(`${API_BASE}/stores/${storeId}/orders`);
   },
 
-  async updateOrderStatus(orderId, status) {
-    const res = await fetch(`${API_BASE}/orders/${orderId}/status`, {
+  async updateOrderStatus(orderId, status, storeId = null) {
+    const payload = { status };
+    if (storeId !== null && storeId !== undefined) {
+      payload.store_id = storeId;
+    }
+    return request(`${API_BASE}/orders/${orderId}/status`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status })
+      body: JSON.stringify(payload)
     });
-    return res.json();
   },
 
   async createOrder(orderPayload) {
-    const res = await fetch(`${API_BASE}/orders`, {
+    return request(`${API_BASE}/orders`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(orderPayload)
     });
-    return res.json();
   },
 
   // Retention
   async getRetentionProfile(customerName = 'Kavita Iyer') {
-    const res = await fetch(`${API_BASE}/retention/profile?customer_name=${encodeURIComponent(customerName)}`);
-    return res.json();
+    return request(`${API_BASE}/retention/profile?customer_name=${encodeURIComponent(customerName)}`);
   },
 
   async advanceRetention(customerName = 'Kavita Iyer') {
-    const res = await fetch(`${API_BASE}/retention/advance`, {
+    return request(`${API_BASE}/retention/advance`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ customer_name: customerName })
     });
-    return res.json();
   },
 
   // Support & Dispute Resolution
   async getSupportTickets() {
-    const res = await fetch(`${API_BASE}/support/tickets`);
-    return res.json();
+    return request(`${API_BASE}/support/tickets`);
   },
 
   async fileSupportTicket(ticketPayload) {
-    const res = await fetch(`${API_BASE}/support/tickets`, {
+    return request(`${API_BASE}/support/tickets`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(ticketPayload)
     });
-    return res.json();
   },
 
   async instantResolve(ticketPayload) {
-    const res = await fetch(`${API_BASE}/support/instant-resolve`, {
+    return request(`${API_BASE}/support/instant-resolve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(ticketPayload)
     });
-    return res.json();
   },
 
   // Analytics & Rescue Simulation
   async getRescueMetrics() {
-    const res = await fetch(`${API_BASE}/analytics/rescue-metrics`);
-    return res.json();
+    return request(`${API_BASE}/analytics/rescue-metrics`);
   },
 
   // AI Copilot & Gemini Engine
   async getAiStatus() {
-    const res = await fetch(`${API_BASE}/ai/status`);
-    return res.json();
+    return request(`${API_BASE}/ai/status`);
   },
 
   async setGeminiKey(apiKey) {
-    const res = await fetch(`${API_BASE}/ai/set-key`, {
+    return request(`${API_BASE}/ai/set-key`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ api_key: apiKey })
     });
-    return res.json();
   },
 
   async testAiPrompt(prompt) {
-    const res = await fetch(`${API_BASE}/ai/test-prompt`, {
+    return request(`${API_BASE}/ai/test-prompt`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt })
     });
-    return res.json();
   }
 };

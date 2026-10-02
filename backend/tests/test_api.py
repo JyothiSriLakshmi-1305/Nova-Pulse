@@ -70,6 +70,11 @@ class NovaPulseApiTestCase(unittest.TestCase):
         self.assertTrue(data['success'])
         self.assertFalse(data['is_in_stock'])
 
+        # Restore stock for clean isolation across test suite
+        res_restore = self.client.post('/api/stores/1/products/1/toggle-stock',
+                                       json={'is_in_stock': True, 'stock_quantity': 35})
+        self.assertEqual(res_restore.status_code, 200)
+
     def test_get_bundles(self):
         res = self.client.get('/api/bundles')
         self.assertEqual(res.status_code, 200)
@@ -221,6 +226,201 @@ class NovaPulseApiTestCase(unittest.TestCase):
         # Invalid status should return 400
         res_bad = self.client.post(f'/api/orders/{order_id}/status', json={"status": "flying"})
         self.assertEqual(res_bad.status_code, 400)
+
+    def test_bundle_items_have_store_and_product_ids(self):
+        res = self.client.get('/api/bundles')
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data['success'])
+        bundles = data['bundles']
+        self.assertGreaterEqual(len(bundles), 1)
+        for b in bundles:
+            self.assertGreaterEqual(len(b['items']), 1)
+            for item in b['items']:
+                self.assertIn('store_id', item)
+                self.assertIn('product_id', item)
+                self.assertIsInstance(item['store_id'], int)
+                self.assertIsInstance(item['product_id'], int)
+
+    def test_multi_store_bundle_order_merchants_receive_only_their_own_items(self):
+        res_bundles = self.client.get('/api/bundles')
+        bundle = res_bundles.get_json()['bundles'][0]
+        
+        items_payload = [
+            {
+                "product_id": it['product_id'],
+                "store_id": it['store_id'],
+                "product_name": it['name'],
+                "store_name": it['store'],
+                "quantity": 1,
+                "price": it['price']
+            }
+            for it in bundle['items']
+        ]
+
+        order_res = self.client.post('/api/orders', json={
+            "customer_name": "Bundle Patron",
+            "is_multi_store": 1,
+            "items": items_payload,
+            "discount_amount": bundle['savings']
+        })
+        self.assertEqual(order_res.status_code, 200)
+        order_id = order_res.get_json()['order_id']
+
+        store_ids_in_bundle = list(set(it['store_id'] for it in items_payload))
+        self.assertGreaterEqual(len(store_ids_in_bundle), 2, "Bundle must span at least 2 distinct stores")
+
+        for s_id in store_ids_in_bundle:
+            s_res = self.client.get(f'/api/stores/{s_id}/orders')
+            self.assertEqual(s_res.status_code, 200)
+            matching = [o for o in s_res.get_json()['orders'] if o['id'] == order_id]
+            self.assertEqual(len(matching), 1, f"Store {s_id} should see order #{order_id}")
+            store_order = matching[0]
+            expected_store_items = [x for x in items_payload if x['store_id'] == s_id]
+            self.assertEqual(len(store_order['items']), len(expected_store_items))
+            self.assertTrue(all(it['product_name'] in [x['product_name'] for x in expected_store_items] for it in store_order['items']))
+
+    def test_independent_merchant_fulfillment_and_composite_order_status(self):
+        order_res = self.client.post('/api/orders', json={
+            "customer_name": "Multi Fulfillment Tester",
+            "is_multi_store": 1,
+            "items": [
+                {"product_id": 1, "store_id": 1, "product_name": "Organic Milk", "store_name": "Nandi Grocers", "quantity": 1, "price": 78},
+                {"product_id": 6, "store_id": 2, "product_name": "Sourdough", "store_name": "Glen's Bakery", "quantity": 1, "price": 180}
+            ]
+        })
+        self.assertEqual(order_res.status_code, 200)
+        order_id = order_res.get_json()['order_id']
+
+        # Initial state: both stores should see status 'placed'
+        s1_res0 = self.client.get('/api/stores/1/orders')
+        s1_order0 = next(o for o in s1_res0.get_json()['orders'] if o['id'] == order_id)
+        self.assertEqual(s1_order0['status'], 'placed')
+
+        s2_res0 = self.client.get('/api/stores/2/orders')
+        s2_order0 = next(o for o in s2_res0.get_json()['orders'] if o['id'] == order_id)
+        self.assertEqual(s2_order0['status'], 'placed')
+
+        # Store 1 updates its items to 'ready'
+        upd_s1 = self.client.post(f'/api/orders/{order_id}/status', json={"status": "ready", "store_id": 1})
+        self.assertEqual(upd_s1.status_code, 200)
+        self.assertEqual(upd_s1.get_json()['store_status'], 'ready')
+        # Composite order status must be 'preparing' because Store 2 is still 'placed'
+        self.assertEqual(upd_s1.get_json()['order_status'], 'preparing')
+
+        # Verify Store 1 sees status 'ready'
+        s1_res1 = self.client.get('/api/stores/1/orders')
+        s1_order1 = next(o for o in s1_res1.get_json()['orders'] if o['id'] == order_id)
+        self.assertEqual(s1_order1['status'], 'ready')
+        self.assertEqual(s1_order1['overall_status'], 'preparing')
+
+        # Verify Store 2 STILL sees status 'placed' (Store 1 updating to Ready does NOT change Store 2)
+        s2_res1 = self.client.get('/api/stores/2/orders')
+        s2_order1 = next(o for o in s2_res1.get_json()['orders'] if o['id'] == order_id)
+        self.assertEqual(s2_order1['status'], 'placed')
+        self.assertEqual(s2_order1['overall_status'], 'preparing')
+
+        # Now Store 2 updates its items to 'ready'
+        upd_s2 = self.client.post(f'/api/orders/{order_id}/status', json={"status": "ready", "store_id": 2})
+        self.assertEqual(upd_s2.status_code, 200)
+        self.assertEqual(upd_s2.get_json()['store_status'], 'ready')
+        # Now BOTH stores are ready, so composite status transitions to 'ready'!
+        self.assertEqual(upd_s2.get_json()['order_status'], 'ready')
+
+        # Verify Store 2 now sees 'ready'
+        s2_res2 = self.client.get('/api/stores/2/orders')
+        s2_order2 = next(o for o in s2_res2.get_json()['orders'] if o['id'] == order_id)
+        self.assertEqual(s2_order2['status'], 'ready')
+        self.assertEqual(s2_order2['overall_status'], 'ready')
+
+        # Both stores complete
+        self.client.post(f'/api/orders/{order_id}/status', json={"status": "completed", "store_id": 1})
+        upd_s2_comp = self.client.post(f'/api/orders/{order_id}/status', json={"status": "completed", "store_id": 2})
+        self.assertEqual(upd_s2_comp.get_json()['order_status'], 'completed')
+
+    def test_store_order_status_update_foreign_store_rejected(self):
+        order_res = self.client.post('/api/orders', json={
+            "customer_name": "Store 1 Only Customer",
+            "items": [{"product_id": 1, "store_id": 1, "product_name": "Milk", "store_name": "Store 1", "quantity": 1, "price": 78}]
+        })
+        order_id = order_res.get_json()['order_id']
+
+        res_foreign = self.client.post(f'/api/orders/{order_id}/status', json={"status": "ready", "store_id": 999})
+        self.assertEqual(res_foreign.status_code, 404)
+        self.assertFalse(res_foreign.get_json()['success'])
+
+    def test_database_performance_indexes_created(self):
+        from backend.database import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type = 'index'")
+        indexes = [row[0] for row in cursor.fetchall()]
+        conn.close()
+
+        expected_indexes = [
+            'idx_order_items_order_id',
+            'idx_order_items_store_id',
+            'idx_support_tickets_order_id',
+            'idx_products_store_id',
+            'idx_orders_customer_name'
+        ]
+        for idx in expected_indexes:
+            self.assertIn(idx, indexes, f"Database index {idx} should be created in schema")
+
+    def test_batch_query_optimization_order_retrieval(self):
+        # Create multiple orders to test batch query retrieval without N+1
+        for i in range(3):
+            self.client.post('/api/orders', json={
+                "customer_name": f"Batch Customer {i}",
+                "items": [
+                    {"product_id": 1, "store_id": 1, "product_name": "Milk", "store_name": "Store 1", "quantity": 1, "price": 78},
+                    {"product_id": 6, "store_id": 2, "product_name": "Sourdough", "store_name": "Store 2", "quantity": 1, "price": 180}
+                ]
+            })
+
+        res = self.client.get('/api/orders')
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data['success'])
+        orders = data['orders']
+        self.assertGreaterEqual(len(orders), 3)
+        for ord_entry in orders[:3]:
+            self.assertIn('items', ord_entry)
+            self.assertIn('support_tickets', ord_entry)
+            self.assertIsInstance(ord_entry['items'], list)
+            self.assertIsInstance(ord_entry['support_tickets'], list)
+
+    def test_backend_live_inventory_revalidation_insufficient_stock(self):
+        # Toggle product 4 to out of stock / 0 qty
+        self.client.post('/api/stores/1/products/4/toggle-stock', json={"is_in_stock": False, "stock_quantity": 0})
+
+        # Attempt to order product 4
+        order_res = self.client.post('/api/orders', json={
+            "customer_name": "Stock Tester",
+            "items": [
+                {"product_id": 4, "store_id": 1, "product_name": "Himalayan Pink Rock Salt", "store_name": "Nandi Grocers", "quantity": 1, "price": 85}
+            ]
+        })
+        self.assertEqual(order_res.status_code, 400)
+        data = order_res.get_json()
+        self.assertFalse(data['success'])
+        self.assertIn("insufficient stock", data['error'].lower())
+
+        # Restore product 4 stock
+        self.client.post('/api/stores/1/products/4/toggle-stock', json={"is_in_stock": True, "stock_quantity": 40})
+
+    def test_backend_live_inventory_revalidation_excessive_quantity(self):
+        # Product 2 has 20 in stock, attempt to order 500
+        order_res = self.client.post('/api/orders', json={
+            "customer_name": "Greedy Shopper",
+            "items": [
+                {"product_id": 2, "store_id": 1, "product_name": "Sona Masoori Rice", "store_name": "Nandi Grocers", "quantity": 500, "price": 390}
+            ]
+        })
+        self.assertEqual(order_res.status_code, 400)
+        data = order_res.get_json()
+        self.assertFalse(data['success'])
+        self.assertIn("insufficient stock", data['error'].lower())
 
 if __name__ == '__main__':
     unittest.main()

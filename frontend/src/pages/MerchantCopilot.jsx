@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import StockConfidenceBadge from '../components/StockConfidenceBadge';
+import OrderStatusBadge from '../components/OrderStatusBadge';
 import { 
   Store, Mic, Sparkles, Check, AlertCircle, RefreshCw, 
   Flame, CheckCircle2, XCircle, Package, ArrowRight, Clock,
@@ -32,6 +33,12 @@ export default function MerchantCopilot({ sharedOrderCounter }) {
     if (selectedStoreId) {
       loadStoreDetails(selectedStoreId);
       loadStoreOrders(selectedStoreId);
+
+      // Clean 10s polling with cleanup on unmount or store switch
+      const timer = setInterval(() => {
+        loadStoreOrders(selectedStoreId);
+      }, 10000);
+      return () => clearInterval(timer);
     }
   }, [selectedStoreId, sharedOrderCounter]);
 
@@ -79,9 +86,14 @@ export default function MerchantCopilot({ sharedOrderCounter }) {
   const handleUpdateStatus = async (orderId, newStatus) => {
     setUpdatingOrderId(orderId);
     try {
-      const res = await api.updateOrderStatus(orderId, newStatus);
+      const res = await api.updateOrderStatus(orderId, newStatus, selectedStoreId);
       if (res.success) {
-        setStoreOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+        setStoreOrders(prev => prev.map(o => o.id === orderId ? { 
+          ...o, 
+          status: newStatus, 
+          store_status: newStatus,
+          overall_status: res.order_status || o.overall_status 
+        } : o));
         showToast(`Order #${orderId} marked as '${newStatus.toUpperCase()}'!`);
       }
     } catch (err) {
@@ -326,9 +338,14 @@ export default function MerchantCopilot({ sharedOrderCounter }) {
                     </div>
 
                     <div className="flex items-center gap-3">
-                      <span className={`text-xs font-extrabold px-3 py-1 rounded-full border capitalize ${getStatusBadge(order.status)}`}>
-                        ● {order.status}
-                      </span>
+                      <div className="flex flex-col items-end">
+                        <OrderStatusBadge status={order.status} />
+                        {order.is_multi_store === 1 && order.overall_status && (
+                          <span className="text-[10px] text-slate-500 mt-0.5">
+                            Order overall: <strong className="capitalize text-slate-700">{order.overall_status}</strong>
+                          </span>
+                        )}
+                      </div>
                       <div className="text-right">
                         <span className="text-[11px] text-slate-400 block">Your Store Portion</span>
                         <span className="font-black text-base text-slate-900">

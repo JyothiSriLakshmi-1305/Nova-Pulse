@@ -7,9 +7,10 @@ import StockConfidenceBadge from '../components/StockConfidenceBadge';
 import { 
   ShoppingBag, Sparkles, CheckCircle2, Store, Clock, ArrowRight, 
   ShieldCheck, RefreshCw, ShoppingCart, Plus, Package, AlertCircle, 
-  FileText, X, AlertTriangle, Check
+  FileText, X, AlertTriangle, Check, AlertOctagon
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import OrderStatusBadge from '../components/OrderStatusBadge';
 
 export default function CustomerStoreView({ retentionProfile, onRefreshProfile, sharedOrderCounter }) {
   // Navigation sub-tab: 'explore' | 'orders'
@@ -24,6 +25,8 @@ export default function CustomerStoreView({ retentionProfile, onRefreshProfile, 
   const [orderingBundleId, setOrderingBundleId] = useState(null);
   const [orderingProductId, setOrderingProductId] = useState(null);
   const [orderSuccess, setOrderSuccess] = useState(null);
+  const [stockConfirmDialog, setStockConfirmDialog] = useState(null);
+  const [checkoutError, setCheckoutError] = useState(null);
 
   // My Orders & Support state
   const [customerOrders, setCustomerOrders] = useState([]);
@@ -39,7 +42,6 @@ export default function CustomerStoreView({ retentionProfile, onRefreshProfile, 
 
   useEffect(() => {
     loadExploreData();
-    loadCustomerOrders();
   }, []);
 
   useEffect(() => {
@@ -93,17 +95,33 @@ export default function CustomerStoreView({ retentionProfile, onRefreshProfile, 
     }
   };
 
-  const handleOrderBundle = async (bundle) => {
+  const executeOrderBundle = async (bundle) => {
     setOrderingBundleId(bundle.id);
+    setCheckoutError(null);
     try {
-      const itemsPayload = bundle.items.map((it, idx) => ({
-        product_id: idx + 1,
-        store_id: bundle.primary_store_id || 1,
-        product_name: it.name,
-        store_name: it.store,
-        quantity: 1,
-        price: it.price
-      }));
+      const itemsPayload = bundle.items.map((it, idx) => {
+        let resolvedStoreId = it.store_id;
+        if (!resolvedStoreId) {
+          const itemStoreLower = (it.store || '').toLowerCase();
+          const matchedStore = stores.find(s => {
+            const sNameLower = (s.name || '').toLowerCase();
+            return sNameLower === itemStoreLower ||
+              (itemStoreLower && (sNameLower.includes(itemStoreLower) || itemStoreLower.includes(sNameLower)));
+          });
+          resolvedStoreId = matchedStore ? matchedStore.id : (bundle.primary_store_id || 1);
+        }
+
+        let resolvedProductId = it.product_id || (idx + 1);
+
+        return {
+          product_id: resolvedProductId,
+          store_id: resolvedStoreId,
+          product_name: it.name,
+          store_name: it.store || 'Partner Store',
+          quantity: 1,
+          price: it.price
+        };
+      });
 
       const res = await api.createOrder({
         customer_name: currentCustomerName,
@@ -135,17 +153,47 @@ export default function CustomerStoreView({ retentionProfile, onRefreshProfile, 
         if (onRefreshProfile) onRefreshProfile();
         if (selectedStore) handleSelectStore(selectedStore);
         loadCustomerOrders();
+      } else {
+        setCheckoutError(res.error || 'Failed to place bundle order');
+        setTimeout(() => setCheckoutError(null), 5000);
       }
     } catch (err) {
       console.error("Failed to place bundle order:", err);
+      setCheckoutError(err.message || 'Error communicating with checkout service');
+      setTimeout(() => setCheckoutError(null), 5000);
     } finally {
       setOrderingBundleId(null);
     }
   };
 
-  const handleOrderProduct = async (product) => {
+  const handleOrderBundle = (bundle) => {
+    // Check if any participating store has SCI < 80
+    const staleStores = [];
+    (bundle.items || []).forEach(it => {
+      const st = stores.find(s => s.name.toLowerCase() === (it.store || '').toLowerCase() || s.id === it.store_id);
+      const sci = st?.computed_sci !== undefined ? st.computed_sci : (st?.stock_confidence_score || 95);
+      if (sci < 80) {
+        staleStores.push(`${it.store} (SCI ${sci}%)`);
+      }
+    });
+
+    if (staleStores.length > 0) {
+      setStockConfirmDialog({
+        type: 'bundle',
+        target: bundle,
+        itemNames: bundle.items.map(it => it.name),
+        reason: `Store inventory sync threshold check: ${staleStores.join(', ')}`
+      });
+      return;
+    }
+
+    executeOrderBundle(bundle);
+  };
+
+  const executeOrderProduct = async (product) => {
     if (!product.is_in_stock) return;
     setOrderingProductId(product.id);
+    setCheckoutError(null);
     try {
       const res = await api.createOrder({
         customer_name: currentCustomerName,
@@ -184,12 +232,38 @@ export default function CustomerStoreView({ retentionProfile, onRefreshProfile, 
         if (onRefreshProfile) onRefreshProfile();
         if (selectedStore) handleSelectStore(selectedStore);
         loadCustomerOrders();
+      } else {
+        setCheckoutError(res.error || 'Failed to place product order');
+        setTimeout(() => setCheckoutError(null), 5000);
       }
     } catch (err) {
       console.error("Failed to place product order:", err);
+      setCheckoutError(err.message || 'Error communicating with checkout service');
+      setTimeout(() => setCheckoutError(null), 5000);
     } finally {
       setOrderingProductId(null);
     }
+  };
+
+  const handleOrderProduct = (product) => {
+    if (!product.is_in_stock) return;
+    const isLowStock = product.stock_quantity <= 2;
+    const sci = selectedStore?.computed_sci !== undefined ? selectedStore.computed_sci : (selectedStore?.stock_confidence_score || 95);
+    const isStaleSci = sci < 80;
+
+    if (isLowStock || isStaleSci) {
+      setStockConfirmDialog({
+        type: 'product',
+        target: product,
+        itemNames: [product.name],
+        reason: isLowStock 
+          ? `Low stock: only ${product.stock_quantity} remaining in live inventory.`
+          : `Store inventory sync threshold: SCI is ${sci}%.`
+      });
+      return;
+    }
+
+    executeOrderProduct(product);
   };
 
   const handleOpenIssueModal = (order) => {
@@ -576,9 +650,7 @@ export default function CustomerStoreView({ retentionProfile, onRefreshProfile, 
                     </div>
 
                     <div className="flex items-center gap-3">
-                      <span className={`text-xs font-extrabold px-3 py-1 rounded-full border capitalize ${getStatusColor(order.status)}`}>
-                        ● {order.status}
-                      </span>
+                      <OrderStatusBadge status={order.status} />
                       <span className="font-black text-base text-slate-900">
                         ₹{order.total_amount}
                       </span>
@@ -790,6 +862,81 @@ export default function CustomerStoreView({ retentionProfile, onRefreshProfile, 
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Checkout Error Toast Banner */}
+      {checkoutError && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-md bg-rose-900 text-white p-4 rounded-2xl shadow-2xl border border-rose-700 flex items-center gap-3 animate-fadeIn">
+          <AlertTriangle className="w-5 h-5 text-rose-300 shrink-0" />
+          <div className="text-xs">
+            <span className="font-extrabold block">Order Not Processed</span>
+            <span>{checkoutError}</span>
+          </div>
+          <button
+            onClick={() => setCheckoutError(null)}
+            className="ml-auto text-rose-300 hover:text-white p-1 rounded-lg cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Pre-Checkout Live Inventory Confirmation Modal */}
+      {stockConfirmDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-amber-200 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center">
+                <AlertOctagon className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-sm text-slate-900">Inventory Verification Notice</h3>
+                <span className="text-[11px] font-semibold text-amber-700">Pre-Checkout Stock Priority Check</span>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-amber-50/90 border border-amber-200 text-xs text-amber-950 space-y-2">
+              <p className="font-bold">
+                Live inventory verification requested: Store will prioritize immediate dispatch.
+              </p>
+              <p className="text-[11px] text-amber-800">
+                {stockConfirmDialog.reason}
+              </p>
+              <div className="pt-1 text-[11px] text-amber-900/80">
+                Target: <strong>{stockConfirmDialog.itemNames.join(', ')}</strong>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-500">
+              Confirming notifies the partner merchant to lock this live stock immediately and prepare for clustered delivery.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setStockConfirmDialog(null)}
+                className="px-3.5 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+              >
+                Cancel / Review
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const { type, target } = stockConfirmDialog;
+                  setStockConfirmDialog(null);
+                  if (type === 'bundle') {
+                    executeOrderBundle(target);
+                  } else {
+                    executeOrderProduct(target);
+                  }
+                }}
+                className="px-4 py-2 text-xs font-extrabold text-white bg-amber-600 hover:bg-amber-700 rounded-xl shadow-xs cursor-pointer"
+              >
+                Confirm & Dispatch Priority
+              </button>
+            </div>
           </div>
         </div>
       )}

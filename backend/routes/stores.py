@@ -127,21 +127,55 @@ def get_store_orders(store_id):
     ''', (store_id,))
     
     order_rows = cursor.fetchall()
+    if not order_rows:
+        conn.close()
+        return jsonify({
+            "success": True, 
+            "store_id": store_id, 
+            "store_name": store['name'],
+            "orders": [],
+            "total_store_orders": 0
+        })
+
+    order_ids = [r['id'] for r in order_rows]
+    placeholders = ','.join('?' for _ in order_ids)
+    
+    # Batch fetch order items for this store in a single query
+    cursor.execute(f'''
+        SELECT order_id, product_id, product_name, quantity, price, is_substituted, status 
+        FROM order_items 
+        WHERE store_id = ? AND order_id IN ({placeholders})
+    ''', [store_id] + order_ids)
+    
+    items_by_order = {}
+    for it in cursor.fetchall():
+        items_by_order.setdefault(it['order_id'], []).append(dict(it))
+        
+    conn.close()
+
     orders = []
     for r in order_rows:
         ord_dict = dict(r)
-        cursor.execute('''
-            SELECT product_id, product_name, quantity, price, is_substituted 
-            FROM order_items 
-            WHERE order_id = ? AND store_id = ?
-        ''', (ord_dict['id'], store_id))
-        items = [dict(it) for it in cursor.fetchall()]
+        items = items_by_order.get(ord_dict['id'], [])
         ord_dict['items'] = items
         ord_dict['store_items_count'] = sum(it['quantity'] for it in items)
         ord_dict['store_subtotal'] = sum(it['price'] * it['quantity'] for it in items)
-        orders.append(ord_dict)
         
-    conn.close()
+        # Store-specific fulfillment status
+        store_statuses = [it.get('status') or 'placed' for it in items]
+        if all(s == 'completed' for s in store_statuses):
+            store_status = 'completed'
+        elif all(s in ('ready', 'completed') for s in store_statuses):
+            store_status = 'ready'
+        elif any(s in ('preparing', 'ready', 'completed') for s in store_statuses):
+            store_status = 'preparing'
+        else:
+            store_status = 'placed'
+
+        ord_dict['store_status'] = store_status
+        ord_dict['overall_status'] = ord_dict['status']
+        ord_dict['status'] = store_status
+        orders.append(ord_dict)
     return jsonify({
         "success": True, 
         "store_id": store_id, 

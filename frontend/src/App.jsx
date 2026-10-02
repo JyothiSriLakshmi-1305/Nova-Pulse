@@ -1,12 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
-import CustomerStoreView from './pages/CustomerStoreView';
-import MerchantCopilot from './pages/MerchantCopilot';
-import SupportPortal from './pages/SupportPortal';
-import ExecutiveDashboard from './pages/ExecutiveDashboard';
 import AiStatusModal from './components/AiStatusModal';
 import { api } from './services/api';
+
+// Code splitting: lazy load major stakeholder role pages
+const CustomerStoreView = lazy(() => import('./pages/CustomerStoreView'));
+const MerchantCopilot = lazy(() => import('./pages/MerchantCopilot'));
+const ExecutiveDashboard = lazy(() => import('./pages/ExecutiveDashboard'));
+
+function PageLoadingFallback() {
+  return (
+    <div className="flex flex-col items-center justify-center py-24 space-y-3" role="status" aria-live="polite">
+      <div className="w-8 h-8 rounded-full border-2 border-indigo-600 border-t-transparent animate-spin" />
+      <span className="text-xs font-semibold text-slate-500">Loading portal...</span>
+    </div>
+  );
+}
 
 export default function App() {
   const [activeRole, setActiveRole] = useState('customer');
@@ -51,23 +61,25 @@ export default function App() {
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8" role="main">
-        {activeRole === 'customer' && (
-          <CustomerStoreView 
-            retentionProfile={retentionProfile} 
-            onRefreshProfile={handleAdvanceProfile} 
-            sharedOrderCounter={sharedOrderCounter}
-          />
-        )}
-        {activeRole === 'merchant' && (
-          <MerchantCopilot 
-            sharedOrderCounter={sharedOrderCounter}
-          />
-        )}
-        {activeRole === 'admin' && (
-          <ExecutiveDashboard 
-            sharedOrderCounter={sharedOrderCounter}
-          />
-        )}
+        <Suspense fallback={<PageLoadingFallback />}>
+          {activeRole === 'customer' && (
+            <CustomerStoreView 
+              retentionProfile={retentionProfile} 
+              onRefreshProfile={handleAdvanceProfile} 
+              sharedOrderCounter={sharedOrderCounter}
+            />
+          )}
+          {activeRole === 'merchant' && (
+            <MerchantCopilot 
+              sharedOrderCounter={sharedOrderCounter}
+            />
+          )}
+          {activeRole === 'admin' && (
+            <ExecutiveDashboard 
+              sharedOrderCounter={sharedOrderCounter}
+            />
+          )}
+        </Suspense>
       </main>
 
       <Footer />
